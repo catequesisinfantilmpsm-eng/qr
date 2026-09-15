@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#14213d">
+  <title>CATEKIDS | Asistencia a Misa</title>
+  <style>
+    :root{--azul:#14213d;--dorado:#f5c542;--crema:#fff9e8;--verde:#16845b;--rojo:#b42318;--texto:#172033}
+    *{box-sizing:border-box} body{margin:0;background:linear-gradient(155deg,#0e1930,#28436c);font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:var(--texto);min-height:100vh;padding:18px}
+    .app{max-width:560px;margin:auto}.marca{text-align:center;color:white;margin:10px 0 18px}.marca h1{margin:0;color:var(--dorado);letter-spacing:2px;font-size:2rem}.marca p{margin:3px 0 0}
+    .card{background:var(--crema);border-radius:24px;padding:20px;box-shadow:0 16px 40px #0005;border:2px solid #ffffff55}.tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
+    button,input{font:inherit}.tab,.principal,.secundario{border:0;border-radius:14px;padding:13px;font-weight:750;cursor:pointer}.tab{background:#e6e9ef;color:#4c5567}.tab.activa,.principal{background:var(--dorado);color:#2d2600}.secundario{background:var(--azul);color:white;width:100%}
+    label{font-weight:750;display:block;margin:9px 0 7px}.busqueda{display:flex;gap:8px}.busqueda input{width:100%;border:2px solid #ccd2dc;border-radius:14px;padding:14px;background:white;font-size:16px}.busqueda input:focus{outline:3px solid #f5c54266;border-color:#b79000}
+    #resultados{display:grid;gap:8px;margin-top:12px}.persona{background:white;border:1px solid #d8dce3;border-radius:14px;padding:12px;text-align:left;cursor:pointer}.persona strong,.persona small{display:block}.persona small{color:#5d6573;margin-top:3px}
+    #lector{display:none}.video-box{background:#0a0a0a;border-radius:18px;overflow:hidden;aspect-ratio:1/1;position:relative}video{width:100%;height:100%;object-fit:cover}.guia{position:absolute;inset:18%;border:4px solid var(--dorado);border-radius:18px;box-shadow:0 0 0 999px #0005}
+    .seleccion{display:none;background:#fff;border:2px solid var(--dorado);border-radius:16px;padding:14px;margin:16px 0}.seleccion strong,.seleccion span{display:block}.gps{font-size:.88rem;color:#535d6e;margin:11px 0;text-align:center}
+    .estado{display:none;margin-top:14px;border-radius:15px;padding:14px;text-align:center;font-weight:700}.estado.ok{display:block;background:#d8f5e7;color:#075c3c}.estado.error{display:block;background:#ffe0dc;color:#7f1d16}.cargando{opacity:.65;pointer-events:none}
+    footer{text-align:center;color:#d9deea;font-size:.78rem;margin:14px}.oculto{display:none!important}
+  </style>
+</head>
+<body>
+<main class="app">
+  <header class="marca"><h1>CATEKIDS</h1><p>Asistencia a la Santa Misa</p></header>
+  <section class="card" id="tarjeta">
+    <div class="tabs">
+      <button class="tab activa" id="tabQr">📷 Escanear QR</button>
+      <button class="tab" id="tabNombre">🔎 Buscar nombre</button>
+    </div>
+    <section id="lector">
+      <div class="video-box"><video id="video" playsinline muted></video><div class="guia"></div></div>
+      <p class="gps">Coloca la tarjeta dentro del recuadro.</p>
+    </section>
+    <section id="manual" class="oculto">
+      <label for="consulta">Nombre o apellidos</label>
+      <div class="busqueda"><input id="consulta" autocomplete="off" placeholder="Ej. Dulceamor Alvarado"><button class="principal" id="buscar">Buscar</button></div>
+      <div id="resultados"></div>
+    </section>
+    <div class="seleccion" id="seleccion"><strong id="nombreElegido"></strong><span id="datosElegidos"></span></div>
+    <p class="gps" id="gps">📍 Solicitaremos permiso para guardar la ubicación.</p>
+    <button class="secundario oculto" id="guardar">✅ Registrar asistencia</button>
+    <div class="estado" id="estado"></div>
+  </section>
+  <footer>El GPS y la cámara solo funcionan con HTTPS y con permiso del dispositivo.</footer>
+</main>
+<script>
+  const CONFIG={
+    // Pegue entre comillas la URL que termina en /exec de su implementación de Apps Script.
+    API_URL:'PEGAR_AQUI_URL_DE_APPS_SCRIPT',
+    API_KEY:''
+  };
+  const $=(s)=>document.querySelector(s);
+  let elegida=null,ubicacion=null,stream=null,escaneando=false;
+  const estado=(texto,tipo='error')=>{const e=$('#estado');e.className='estado '+tipo;e.textContent=texto};
+  async function api(datos){
+    if(!CONFIG.API_URL.startsWith('https://')) throw new Error('Primero configura la URL de Apps Script en index.html.');
+    const body=new URLSearchParams({...datos,key:CONFIG.API_KEY});
+    const r=await fetch(CONFIG.API_URL,{method:'POST',body});
+    const j=await r.json(); if(!j.ok&&datos.action!=='registrar')throw new Error(j.error||'Error de conexión'); return j;
+  }
+  async function obtenerGps(){
+    if(!navigator.geolocation){$('#gps').textContent='⚠️ Este equipo no ofrece GPS.';return}
+    $('#gps').textContent='📍 Obteniendo ubicación…';
+    navigator.geolocation.getCurrentPosition(p=>{ubicacion={latitud:p.coords.latitude,longitud:p.coords.longitude,precision:Math.round(p.coords.accuracy)};$('#gps').textContent=`📍 Ubicación lista (precisión aproximada: ${ubicacion.precision} m)`},()=>{$('#gps').textContent='⚠️ Sin permiso de ubicación. El registro se guardará sin GPS.'},{enableHighAccuracy:true,timeout:12000,maximumAge:30000});
+  }
+  function elegir(p,metodo){
+    elegida={...p,metodo};$('#nombreElegido').textContent=p.nombre;$('#datosElegidos').textContent=[p.curso,p.catequista].filter(Boolean).join(' · ');$('#seleccion').style.display='block';$('#guardar').classList.remove('oculto');$('#resultados').innerHTML='';detenerCamara();obtenerGps();
+  }
+  async function buscar(q,metodo='nombre'){
+    try{estado('Buscando…','ok');const j=await api({action:'buscar',q});$('#estado').className='estado';
+      if(!j.resultados.length)return estado('No encontramos coincidencias. Revisa el nombre o código.');
+      if(metodo==='qr'&&j.resultados.length===1)return elegir(j.resultados[0],'QR');
+      $('#resultados').innerHTML=j.resultados.map((p,i)=>`<button class="persona" data-i="${i}"><strong>${seguro(p.nombre)}</strong><small>${seguro([p.curso,p.catequista].filter(Boolean).join(' · '))}</small></button>`).join('');
+      [...document.querySelectorAll('.persona')].forEach(b=>b.onclick=()=>elegir(j.resultados[+b.dataset.i],'Nombre'));
+    }catch(e){estado(e.message)}
+  }
+  function seguro(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+  async function iniciarCamara(){
+    $('#lector').style.display='block';
+    if(!('BarcodeDetector'in window)){estado('Este navegador no tiene lector QR integrado. Usa “Buscar nombre” o abre la página en Chrome para Android.');return}
+    try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}});const v=$('#video');v.srcObject=stream;await v.play();escaneando=true;const detector=new BarcodeDetector({formats:['qr_code']});
+      const ciclo=async()=>{if(!escaneando)return;try{const codigos=await detector.detect(v);if(codigos.length){escaneando=false;navigator.vibrate?.(120);buscar(codigos[0].rawValue,'qr');return}}catch(e){}requestAnimationFrame(ciclo)};ciclo();
+    }catch(e){estado('No se pudo abrir la cámara. Revisa el permiso o usa la búsqueda por nombre.')}
+  }
+  function detenerCamara(){escaneando=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
+  function mostrar(tipo){detenerCamara();elegida=null;$('#seleccion').style.display='none';$('#guardar').classList.add('oculto');$('#estado').className='estado';const qr=tipo==='qr';$('#tabQr').classList.toggle('activa',qr);$('#tabNombre').classList.toggle('activa',!qr);$('#manual').classList.toggle('oculto',qr);$('#lector').style.display=qr?'block':'none';if(qr)iniciarCamara()}
+  $('#tabQr').onclick=()=>mostrar('qr');$('#tabNombre').onclick=()=>mostrar('nombre');$('#buscar').onclick=()=>buscar($('#consulta').value);$('#consulta').onkeydown=e=>{if(e.key==='Enter')buscar(e.target.value)};
+  $('#guardar').onclick=async()=>{if(!elegida)return;const t=$('#tarjeta');t.classList.add('cargando');try{const j=await api({action:'registrar',codigo:elegida.codigo,metodo:elegida.metodo,...(ubicacion||{})});if(!j.ok)throw new Error(j.error);estado(`✅ ${j.persona.nombre} — ${j.hora}`,'ok');elegida=null;$('#seleccion').style.display='none';$('#guardar').classList.add('oculto');setTimeout(()=>mostrar('qr'),2800)}catch(e){estado(e.message)}finally{t.classList.remove('cargando')}};
+  window.addEventListener('pagehide',detenerCamara);mostrar('qr');
+</script>
+</body>
+</html>
